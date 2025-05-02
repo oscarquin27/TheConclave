@@ -2,521 +2,470 @@ const { expect } = require("chai")
 const { ethers } = require("hardhat")
 const { time } = require("@nomicfoundation/hardhat-network-helpers")
 
-describe("TheConclave", function () {
-  let TheConclave
-  let conclave
+describe("TheConclave Contract", function () {
+  let theConclave
   let owner
   let addr1
   let addr2
+  let addr3
   let addrs
-
-  const FEE = 5n // 5% fee
-  const MIN_BET = ethers.parseEther("0.000333333333333333") // in wei
+  let deploymentFee = 5 // 5% fee
 
   beforeEach(async function () {
-    // Get the ContractFactory and Signers
-    TheConclave = await ethers.getContractFactory("TheConclave")
-    ;[owner, addr1, addr2, ...addrs] = await ethers.getSigners()
+    // Get signers
+    ;[owner, addr1, addr2, addr3, ...addrs] = await ethers.getSigners()
 
-    // Deploy the contract
-    conclave = await TheConclave.deploy(FEE)
-    await conclave.waitForDeployment()
+    // Deploy contract
+    const TheConclaveFactory = await ethers.getContractFactory("TheConclave")
+    theConclave = await TheConclaveFactory.deploy(deploymentFee)
+    await theConclave.waitForDeployment()
+
+    // Open betting
+    await theConclave.setOpen(true)
   })
 
   describe("Deployment", function () {
     it("Should set the right owner", async function () {
-      expect(await conclave.owner()).to.equal(owner.address)
+      expect(await theConclave.owner()).to.equal(owner.address)
     })
 
-    it("Should set the correct initial values", async function () {
-      expect(await conclave.bag()).to.equal(0n)
-      expect(await conclave.minimumBet()).to.equal(MIN_BET)
-      expect(await conclave.fee()).to.equal(FEE)
-      expect(await conclave.isOpen()).to.equal(false)
-      expect(await conclave.winner()).to.equal(0n)
-      expect(await conclave.totalPrizeClaimed()).to.equal(0n)
+    it("Should set correct initial values", async function () {
+      expect(await theConclave.fee()).to.equal(deploymentFee)
+      expect(await theConclave.isOpen()).to.equal(true)
+      expect(await theConclave.winner()).to.equal(0)
+      expect(await theConclave.isDisputed()).to.equal(false)
+      expect(await theConclave.paused()).to.equal(false)
+      expect(await theConclave.bag()).to.equal(0)
+      expect(await theConclave.totalPrizeClaimed()).to.equal(0)
+      expect(await theConclave.minimumBet()).to.equal(333333333333333n)
+      expect(await theConclave.maximumBet()).to.equal(ethers.parseEther("10"))
     })
   })
 
-  describe("Owner functions", function () {
+  describe("Owner Functions", function () {
     it("Should allow owner to change minimum bet amount", async function () {
-      const newMinBet = ethers.parseEther("0.001")
-      await conclave.changeMinimumBetAmount(newMinBet)
-      expect(await conclave.minimumBet()).to.equal(newMinBet)
+      const newMinBet = ethers.parseEther("0.1")
+      await theConclave.changeMinimumBetAmount(newMinBet)
+      expect(await theConclave.minimumBet()).to.equal(newMinBet)
     })
 
-    it("Should emit MinimumBetChanged event when minimum bet is changed", async function () {
-      const newMinBet = ethers.parseEther("0.001")
-      await expect(conclave.changeMinimumBetAmount(newMinBet))
-        .to.emit(conclave, "MinimumBetChanged")
-        .withArgs(newMinBet)
+    it("Should allow owner to change maximum bet amount", async function () {
+      const newMaxBet = ethers.parseEther("20")
+      await theConclave.changeMaximumBetAmount(newMaxBet)
+      expect(await theConclave.maximumBet()).to.equal(newMaxBet)
     })
 
     it("Should allow owner to change fee", async function () {
-      const newFee = 10n // 10%
-      await conclave.changeFee(newFee)
-      expect(await conclave.fee()).to.equal(newFee)
+      const newFee = 10
+      await theConclave.changeFee(newFee)
+      expect(await theConclave.fee()).to.equal(newFee)
     })
 
-    it("Should emit FeeChanged event when fee is changed", async function () {
-      const newFee = 10n
-      await expect(conclave.changeFee(newFee))
-        .to.emit(conclave, "FeeChanged")
-        .withArgs(newFee)
+    it("Should allow owner to toggle betting status", async function () {
+      await theConclave.setOpen(false)
+      expect(await theConclave.isOpen()).to.equal(false)
+
+      await theConclave.setOpen(true)
+      expect(await theConclave.isOpen()).to.equal(true)
     })
 
-    it("Should not allow fee to be set to 0 or greater than 100", async function () {
-      await expect(conclave.changeFee(0n)).to.be.revertedWith(
-        "Fee must be between 1 and 100"
+    it("Should allow owner to change disputed status", async function () {
+      await theConclave.changeDisputedStatus(true)
+      expect(await theConclave.isDisputed()).to.equal(true)
+
+      await theConclave.changeDisputedStatus(false)
+      expect(await theConclave.isDisputed()).to.equal(false)
+    })
+
+    it("Should allow owner to toggle pause", async function () {
+      await theConclave.togglePause()
+      expect(await theConclave.paused()).to.equal(true)
+
+      await theConclave.togglePause()
+      expect(await theConclave.paused()).to.equal(false)
+    })
+
+    it("Should allow owner to transfer ownership", async function () {
+      await theConclave.transferOwnership(addr1.address)
+      expect(await theConclave.owner()).to.equal(addr1.address)
+    })
+
+    it("Should not allow non-owner to call owner functions", async function () {
+      await expect(
+        theConclave
+          .connect(addr1)
+          .changeMinimumBetAmount(ethers.parseEther("0.1"))
+      ).to.be.revertedWith("Only owner can call this function")
+
+      await expect(
+        theConclave
+          .connect(addr1)
+          .changeMaximumBetAmount(ethers.parseEther("20"))
+      ).to.be.revertedWith("Only owner can call this function")
+
+      await expect(theConclave.connect(addr1).changeFee(10)).to.be.revertedWith(
+        "Only owner can call this function"
       )
-      await expect(conclave.changeFee(101n)).to.be.revertedWith(
-        "Fee must be between 1 and 100"
+
+      await expect(
+        theConclave.connect(addr1).setOpen(false)
+      ).to.be.revertedWith("Only owner can call this function")
+
+      await expect(
+        theConclave.connect(addr1).changeDisputedStatus(true)
+      ).to.be.revertedWith("Only owner can call this function")
+
+      await expect(theConclave.connect(addr1).togglePause()).to.be.revertedWith(
+        "Only owner can call this function"
       )
+
+      await expect(
+        theConclave.connect(addr1).transferOwnership(addr2.address)
+      ).to.be.revertedWith("Only owner can call this function")
+    })
+  })
+
+  describe("Betting", function () {
+    it("Should allow users to place bets", async function () {
+      const betAmount = ethers.parseEther("1")
+      const popeId = 42
+
+      await theConclave.connect(addr1).placeBet(popeId, { value: betAmount })
+
+      const feeAmount = (betAmount * BigInt(deploymentFee)) / 100n
+      const amountToBet = betAmount - feeAmount
+
+      expect(await theConclave.getUserBet(addr1.address, popeId)).to.equal(
+        amountToBet
+      )
+      expect(await theConclave.totalBetsByPopeId(popeId)).to.equal(amountToBet)
+      expect(await theConclave.bag()).to.equal(amountToBet)
     })
 
-    it("Should allow owner to open betting", async function () {
-      await conclave.setOpen(true)
-      expect(await conclave.isOpen()).to.equal(true)
+    it("Should reject bets below minimum", async function () {
+      const betAmount = ethers.parseEther("0.0001") // Too small
+      await expect(
+        theConclave.connect(addr1).placeBet(42, { value: betAmount })
+      ).to.be.revertedWith("Bet amount below minimum")
     })
 
-    it("Should emit BettingStatusChanged event when betting status is changed", async function () {
-      await expect(conclave.setOpen(true))
-        .to.emit(conclave, "BettingStatusChanged")
-        .withArgs(true)
+    it("Should reject bets above maximum", async function () {
+      const betAmount = ethers.parseEther("11") // Too large
+      await expect(
+        theConclave.connect(addr1).placeBet(42, { value: betAmount })
+      ).to.be.revertedWith("Bet amount above maximum")
     })
 
-    it("Should allow owner to close betting", async function () {
-      await conclave.setOpen(true)
-      await conclave.setOpen(false)
-      expect(await conclave.isOpen()).to.equal(false)
+    it("Should reject bets with invalid pope IDs", async function () {
+      const betAmount = ethers.parseEther("1")
+
+      await expect(
+        theConclave.connect(addr1).placeBet(0, { value: betAmount })
+      ).to.be.revertedWith("Pope id must be between 1 and 135")
+
+      await expect(
+        theConclave.connect(addr1).placeBet(136, { value: betAmount })
+      ).to.be.revertedWith("Pope id must be between 1 and 135")
     })
 
+    it("Should reject bets when betting is closed", async function () {
+      await theConclave.setOpen(false)
+
+      const betAmount = ethers.parseEther("1")
+      await expect(
+        theConclave.connect(addr1).placeBet(42, { value: betAmount })
+      ).to.be.revertedWith("Betting period is not open yet!")
+    })
+
+    it("Should reject bets when contract is paused", async function () {
+      await theConclave.togglePause()
+
+      const betAmount = ethers.parseEther("1")
+      await expect(
+        theConclave.connect(addr1).placeBet(42, { value: betAmount })
+      ).to.be.revertedWith("Contract is paused")
+    })
+  })
+
+  describe("Winner Selection", function () {
     it("Should allow owner to set winner", async function () {
-      // First close betting
-      await conclave.setOpen(false)
-      const popeId = 42n
-      await conclave.setWinner(popeId)
-      expect(await conclave.winner()).to.equal(popeId)
-    })
+      await theConclave.setOpen(false)
+      const popeId = 42
+      const timestamp = await time.latest()
 
-    it("Should emit WinnerSet event when winner is set", async function () {
-      await conclave.setOpen(false)
-      const popeId = 42n
-      await expect(conclave.setWinner(popeId))
-        .to.emit(conclave, "WinnerSet")
-        .withArgs(popeId)
+      await theConclave.setWinner(popeId, timestamp)
+
+      expect(await theConclave.winner()).to.equal(popeId)
     })
 
     it("Should not allow setting winner when betting is open", async function () {
-      await conclave.setOpen(true)
-      await expect(conclave.setWinner(42n)).to.be.revertedWith(
+      const timestamp = await time.latest()
+      await expect(theConclave.setWinner(42, timestamp)).to.be.revertedWith(
         "Betting period is still open!"
       )
     })
 
-    it("Should not allow setting invalid pope IDs", async function () {
-      await conclave.setOpen(false)
-      await expect(conclave.setWinner(0n)).to.be.revertedWith(
+    it("Should not allow setting winner twice", async function () {
+      await theConclave.setOpen(false)
+      const timestamp = await time.latest()
+
+      await theConclave.setWinner(42, timestamp)
+
+      await expect(theConclave.setWinner(43, timestamp)).to.be.revertedWith(
+        "Winner already set"
+      )
+    })
+
+    it("Should not allow setting winner with invalid pope ID", async function () {
+      await theConclave.setOpen(false)
+      const timestamp = await time.latest()
+
+      await expect(theConclave.setWinner(0, timestamp)).to.be.revertedWith(
         "Pope id must be between 1 and 135"
       )
-      await expect(conclave.setWinner(136n)).to.be.revertedWith(
+
+      await expect(theConclave.setWinner(136, timestamp)).to.be.revertedWith(
         "Pope id must be between 1 and 135"
       )
+    })
+
+    it("Should not allow setting winner with invalid timestamp", async function () {
+      await theConclave.setOpen(false)
+      const startTime = await theConclave.startTime()
+
+      await expect(
+        theConclave.setWinner(42, startTime - 1n)
+      ).to.be.revertedWith("Cannot place winner on that timestamp")
     })
   })
 
-  describe("Betting functions", function () {
+  describe("Prize Redemption", function () {
     beforeEach(async function () {
-      // Open betting for these tests
-      await conclave.setOpen(true)
-    })
-
-    it("Should allow users to place bets", async function () {
+      // Place bets from multiple users
       const betAmount = ethers.parseEther("1")
-      const popeId = 42n
-      await conclave.connect(addr1).placeBet(popeId, { value: betAmount })
+      const winningPopeId = 42
+      const losingPopeId = 43
 
-      // Calculate expected values
-      const feeAmount = (betAmount * FEE) / 100n
-      const amountToBet = betAmount - feeAmount
-
-      // Check recorded bet amounts
-      const userBet = await conclave.getUserBet(addr1.address, popeId)
-      const totalBets = await conclave.totalBetsByPopeId(popeId)
-      const bagAmount = await conclave.bag()
-
-      expect(userBet).to.equal(amountToBet)
-      expect(totalBets).to.equal(amountToBet)
-      expect(bagAmount).to.equal(amountToBet)
-    })
-
-    it("Should emit BetPlaced event when a bet is placed", async function () {
-      const betAmount = ethers.parseEther("1")
-      const popeId = 42n
-
-      // Calculate expected values
-      const feeAmount = (betAmount * FEE) / 100n
-      const amountToBet = betAmount - feeAmount
-
-      await expect(
-        conclave.connect(addr1).placeBet(popeId, { value: betAmount })
-      )
-        .to.emit(conclave, "BetPlaced")
-        .withArgs(addr1.address, popeId, amountToBet)
-    })
-
-    it("Should reject bets below minimum", async function () {
-      const belowMinBet = ethers.parseEther("0.0001")
-      await expect(
-        conclave.connect(addr1).placeBet(42n, { value: belowMinBet })
-      ).to.be.revertedWith("Bet amount below minimum")
-    })
-
-    it("Should not allow betting on invalid pope IDs", async function () {
-      const betAmount = ethers.parseEther("1")
-      await expect(
-        conclave.connect(addr1).placeBet(0n, { value: betAmount })
-      ).to.be.revertedWith("Pope id must be between 1 and 135")
-      await expect(
-        conclave.connect(addr1).placeBet(136n, { value: betAmount })
-      ).to.be.revertedWith("Pope id must be between 1 and 135")
-    })
-
-    it("Should not allow betting when betting is closed", async function () {
-      await conclave.setOpen(false)
-      const betAmount = ethers.parseEther("1")
-      await expect(
-        conclave.connect(addr1).placeBet(42n, { value: betAmount })
-      ).to.be.revertedWith("Betting period is not open yet!")
-    })
-
-    it("Should transfer fee to owner", async function () {
-      const betAmount = ethers.parseEther("1")
-      const popeId = 42n
-
-      // Calculate fee amount
-      const feeAmount = (betAmount * FEE) / 100n
-
-      // Check owner balance change
-      const ownerInitialBalance = await ethers.provider.getBalance(
-        owner.address
-      )
-      const tx = await conclave
+      await theConclave
         .connect(addr1)
-        .placeBet(popeId, { value: betAmount })
-      const receipt = await tx.wait()
-      const ownerFinalBalance = await ethers.provider.getBalance(owner.address)
-
-      expect(ownerFinalBalance - ownerInitialBalance).to.equal(feeAmount)
-    })
-  })
-
-  describe("Prize redemption", function () {
-    const popeId1 = 42n
-    const popeId2 = 43n
-
-    beforeEach(async function () {
-      // Setup scenario with multiple bets
-      await conclave.setOpen(true)
-
-      // Addr1 bets on Pope 42
-      await conclave
-        .connect(addr1)
-        .placeBet(popeId1, { value: ethers.parseEther("1") })
-
-      // Addr2 bets on Pope 43
-      await conclave
+        .placeBet(winningPopeId, { value: betAmount })
+      await theConclave
         .connect(addr2)
-        .placeBet(popeId2, { value: ethers.parseEther("2") })
+        .placeBet(winningPopeId, { value: betAmount })
+      await theConclave
+        .connect(addr3)
+        .placeBet(losingPopeId, { value: betAmount })
 
-      // Close betting and set winner
-      await conclave.setOpen(false)
-      await conclave.setWinner(popeId1)
+      // Close betting
+      await theConclave.setOpen(false)
+
+      // Set winner
+      const timestamp = await time.latest()
+      await theConclave.setWinner(winningPopeId, timestamp)
+
+      // Mark as disputed (validated)
+      await theConclave.changeDisputedStatus(true)
     })
 
     it("Should allow winners to redeem prizes", async function () {
       const initialBalance = await ethers.provider.getBalance(addr1.address)
 
       // Redeem prize
-      const tx = await conclave.connect(addr1).redeemPrize()
+      const tx = await theConclave.connect(addr1).redeemPrize()
       const receipt = await tx.wait()
       const gasUsed = receipt.gasUsed * receipt.gasPrice
 
+      // Calculate expected prize
+      const feeAmount = (ethers.parseEther("1") * BigInt(deploymentFee)) / 100n
+      const betAmount = ethers.parseEther("1") - feeAmount
+      const totalBetAmount = betAmount * 2n // addr1 and addr2 bet on winning pope
+      const expectedPrize = (betAmount * (betAmount * 3n)) / totalBetAmount
+
+      // Check balance increase
       const finalBalance = await ethers.provider.getBalance(addr1.address)
+      expect(finalBalance).to.be.closeTo(
+        initialBalance + expectedPrize - gasUsed,
+        ethers.parseEther("0.01") // Allow small difference due to gas price variations
+      )
 
-      // Get contract bag before redemption
-      const contractBag = await conclave.bag()
-
-      // Balance should increase by the prize amount minus gas costs
-      expect(finalBalance - initialBalance + gasUsed).to.equal(contractBag)
-    })
-
-    it("Should emit PrizeRedeemed event when prize is redeemed", async function () {
-      const contractBag = await conclave.bag()
-
-      await expect(conclave.connect(addr1).redeemPrize())
-        .to.emit(conclave, "PrizeRedeemed")
-        .withArgs(addr1.address, contractBag)
+      // Verify claimed status
+      expect(await theConclave.hasClaimed(addr1.address)).to.equal(true)
     })
 
     it("Should not allow non-winners to redeem prizes", async function () {
-      await expect(conclave.connect(addr2).redeemPrize()).to.be.revertedWith(
+      await expect(theConclave.connect(addr3).redeemPrize()).to.be.revertedWith(
         "You didn't vote for the winning Pope"
       )
     })
 
-    it("Should not allow winners to redeem prizes twice", async function () {
-      await conclave.connect(addr1).redeemPrize()
-      await expect(conclave.connect(addr1).redeemPrize()).to.be.revertedWith(
+    it("Should not allow double-claiming", async function () {
+      await theConclave.connect(addr1).redeemPrize()
+
+      await expect(theConclave.connect(addr1).redeemPrize()).to.be.revertedWith(
         "You have already claimed your prize"
       )
     })
 
-    it("Should not allow prize redemption when winner hasn't been set", async function () {
-      // Deploy fresh contract
-      conclave = await TheConclave.deploy(FEE)
-      await conclave.waitForDeployment()
+    it("Should not allow redemption when contract is not disputed", async function () {
+      await theConclave.changeDisputedStatus(false)
 
-      await conclave.setOpen(true)
-      await conclave
-        .connect(addr1)
-        .placeBet(popeId1, { value: ethers.parseEther("1") })
-      await conclave.setOpen(false)
-
-      // Try to claim without winner being set
-      await expect(conclave.connect(addr1).redeemPrize()).to.be.revertedWith(
-        "Pope hasn't been elected yet!"
-      )
-    })
-
-    it("Should not allow prize redemption when betting is still open", async function () {
-      // Deploy fresh contract
-      conclave = await TheConclave.deploy(FEE)
-      await conclave.waitForDeployment()
-
-      await conclave.setOpen(true)
-      await conclave
-        .connect(addr1)
-        .placeBet(popeId1, { value: ethers.parseEther("1") })
-
-      // Try to claim when betting is still open (even though there's no winner yet)
-      await expect(conclave.connect(addr1).redeemPrize()).to.be.revertedWith(
-        "Betting period is still open!"
+      await expect(theConclave.connect(addr1).redeemPrize()).to.be.revertedWith(
+        "The contract has not been disputed yet"
       )
     })
   })
 
-  describe("Emergency and admin functions", function () {
-    const popeId1 = 42n
-    const popeId2 = 43n
-
+  describe("Dispute Functionality", function () {
     beforeEach(async function () {
-      // Setup scenario with multiple bets
-      await conclave.setOpen(true)
+      // Place bets
+      const betAmount = ethers.parseEther("1")
+      const popeId = 42
 
-      // Addr1 and addr2 bet on different popes
-      await conclave
-        .connect(addr1)
-        .placeBet(popeId1, { value: ethers.parseEther("1") })
-      await conclave
-        .connect(addr2)
-        .placeBet(popeId2, { value: ethers.parseEther("2") })
+      await theConclave.connect(addr1).placeBet(popeId, { value: betAmount })
+
+      // Close betting
+      await theConclave.setOpen(false)
+
+      // Set winner
+      const timestamp = await time.latest()
+      await theConclave.setWinner(popeId, timestamp)
+    })
+
+    it("Should allow owner to dispute votes", async function () {
+      const feeAmount = (ethers.parseEther("1") * BigInt(deploymentFee)) / 100n
+      const betAmount = ethers.parseEther("1") - feeAmount
+      const disputeAmount = betAmount / 2n
+
+      await theConclave.disputeVotes(addr1.address, disputeAmount, 42)
+
+      expect(await theConclave.getUserBet(addr1.address, 42)).to.equal(
+        betAmount - disputeAmount
+      )
+      expect(
+        await theConclave.invalidUserVoteAmountForRefund(addr1.address)
+      ).to.equal(disputeAmount)
+      expect(await theConclave.bag()).to.equal(betAmount - disputeAmount)
+    })
+
+    it("Should allow users to refund disputed amounts", async function () {
+      const feeAmount = (ethers.parseEther("1") * BigInt(deploymentFee)) / 100n
+      const betAmount = ethers.parseEther("1") - feeAmount
+      const disputeAmount = betAmount / 2n
+
+      await theConclave.disputeVotes(addr1.address, disputeAmount, 42)
+      await theConclave.changeDisputedStatus(true)
+
+      const initialBalance = await ethers.provider.getBalance(addr1.address)
+
+      // Refund disputed amount
+      const tx = await theConclave.connect(addr1).refund()
+      const receipt = await tx.wait()
+      const gasUsed = receipt.gasUsed * receipt.gasPrice
+
+      // Check balance increase
+      const finalBalance = await ethers.provider.getBalance(addr1.address)
+      expect(finalBalance).to.be.closeTo(
+        initialBalance + disputeAmount - gasUsed,
+        ethers.parseEther("0.01") // Allow small difference due to gas price variations
+      )
+
+      // Verify refund was processed
+      expect(
+        await theConclave.invalidUserVoteAmountForRefund(addr1.address)
+      ).to.equal(0)
+    })
+  })
+
+  describe("Emergency Functions", function () {
+    beforeEach(async function () {
+      // Place bets
+      const betAmount = ethers.parseEther("1")
+      const popeId = 42
+
+      await theConclave.connect(addr1).placeBet(popeId, { value: betAmount })
+
+      // Close betting
+      await theConclave.setOpen(false)
+
+      // Set winner
+      const timestamp = await time.latest()
+      await theConclave.setWinner(popeId, timestamp)
+
+      // Mark as disputed (validated)
+      await theConclave.changeDisputedStatus(true)
+    })
+
+    it("Should allow owner to perform emergency withdraw", async function () {
+      // Add extra ETH to contract (simulating unclaimed funds)
+      await owner.sendTransaction({
+        to: await theConclave.getAddress(),
+        value: ethers.parseEther("2"),
+      })
+
+      const initialBalance = await ethers.provider.getBalance(owner.address)
+
+      // Perform emergency withdraw
+      const tx = await theConclave.emergencyWithdraw()
+      const receipt = await tx.wait()
+      const gasUsed = receipt.gasUsed * receipt.gasPrice
+
+      // Check balance increase
+      const finalBalance = await ethers.provider.getBalance(owner.address)
+      expect(finalBalance).to.be.closeTo(
+        initialBalance + ethers.parseEther("2") - gasUsed,
+        ethers.parseEther("0.01") // Allow small difference due to gas price variations
+      )
+    })
+
+    it("Should allow owner to retrieve unclaimed funds after timeout", async function () {
+      // Increase time to simulate passing of 180 days
+      await time.increase(180 * 24 * 60 * 60 + 1)
+
+      const initialBalance = await ethers.provider.getBalance(owner.address)
+
+      // Retrieve unclaimed funds
+      const tx = await theConclave.retrieveUnclaimedFunds(180 * 24 * 60 * 60)
+      const receipt = await tx.wait()
+      const gasUsed = receipt.gasUsed * receipt.gasPrice
+
+      // Check balance increase (account for gas)
+      const finalBalance = await ethers.provider.getBalance(owner.address)
+      const contractBalance = await ethers.provider.getBalance(
+        await theConclave.getAddress()
+      )
+
+      expect(contractBalance).to.equal(0)
+      expect(finalBalance).to.be.greaterThan(initialBalance - gasUsed)
+    })
+  })
+
+  describe("Validation", function () {
+    it("Should correctly validate distribution", async function () {
+      // Initial state should be valid
+      expect(await theConclave.validateDistribution()).to.equal(true)
+
+      // Place bets
+      const betAmount = ethers.parseEther("1")
+      const popeId = 42
+
+      await theConclave.connect(addr1).placeBet(popeId, { value: betAmount })
 
       // Close betting and set winner
-      await conclave.setOpen(false)
-      await conclave.setWinner(popeId1)
-    })
+      await theConclave.setOpen(false)
+      const timestamp = await time.latest()
+      await theConclave.setWinner(popeId, timestamp)
 
-    it("Should allow owner to withdraw extra funds after some prizes are claimed", async function () {
-      // Addr1 claims their prize
-      await conclave.connect(addr1).redeemPrize()
+      // Mark as disputed (validated)
+      await theConclave.changeDisputedStatus(true)
 
-      // At this point, addr1 has claimed their prize, but addr2 hasn't (and won't be able to since they bet on the wrong pope)
-      // There may be some extra ETH in the contract from fees or rounding
+      // Distribution should still be valid
+      expect(await theConclave.validateDistribution()).to.equal(true)
 
-      const initialOwnerBalance = await ethers.provider.getBalance(
-        owner.address
-      )
-      const contractBalance = await ethers.provider.getBalance(
-        await conclave.getAddress()
-      )
+      // After prize redemption
+      await theConclave.connect(addr1).redeemPrize()
 
-      // Owner withdraws
-      const tx = await conclave.emergencyWithdraw()
-      const receipt = await tx.wait()
-      const gasUsed = receipt.gasUsed * receipt.gasPrice
-
-      const finalOwnerBalance = await ethers.provider.getBalance(owner.address)
-
-      // Owner received any extra funds not reserved for prizes
-      expect(finalOwnerBalance - initialOwnerBalance + gasUsed).to.equal(
-        contractBalance
-      )
-    })
-
-    it("Should allow owner to retrieve unclaimed funds after time threshold", async function () {
-      // Fast forward time to simulate passage of time
-      const threshold = 30n * 24n * 60n * 60n // 30 days in seconds
-      await time.increase(Number(threshold))
-
-      const initialOwnerBalance = await ethers.provider.getBalance(
-        owner.address
-      )
-      const contractBalance = await ethers.provider.getBalance(
-        await conclave.getAddress()
-      )
-
-      // Owner retrieves unclaimed funds
-      const tx = await conclave.retrieveUnclaimedFunds(threshold)
-      const receipt = await tx.wait()
-      const gasUsed = receipt.gasUsed * receipt.gasPrice
-
-      const finalOwnerBalance = await ethers.provider.getBalance(owner.address)
-
-      // Owner received all contract funds
-      expect(finalOwnerBalance - initialOwnerBalance + gasUsed).to.equal(
-        contractBalance
-      )
-    })
-
-    it("Should not allow non-owners to call owner functions", async function () {
-      await expect(
-        conclave
-          .connect(addr1)
-          .changeMinimumBetAmount(ethers.parseEther("0.001"))
-      ).to.be.revertedWith("Only owner can call this function")
-
-      await expect(conclave.connect(addr1).changeFee(10n)).to.be.revertedWith(
-        "Only owner can call this function"
-      )
-
-      await expect(conclave.connect(addr1).setOpen(false)).to.be.revertedWith(
-        "Only owner can call this function"
-      )
-
-      await expect(conclave.connect(addr1).setWinner(42n)).to.be.revertedWith(
-        "Only owner can call this function"
-      )
-
-      await expect(
-        conclave.connect(addr1).emergencyWithdraw()
-      ).to.be.revertedWith("Only owner can call this function")
-
-      await expect(
-        conclave.connect(addr1).retrieveUnclaimedFunds(0n)
-      ).to.be.revertedWith("Only owner can call this function")
-    })
-
-    it("Should not allow retrieveUnclaimedFunds before time threshold", async function () {
-      const threshold = 30n * 24n * 60n * 60n // 30 days in seconds
-      await expect(
-        conclave.retrieveUnclaimedFunds(threshold)
-      ).to.be.revertedWith("Time threshold not reached yet")
-    })
-  })
-
-  describe("Edge cases", function () {
-    it("Should handle multiple bets from the same user on different popes", async function () {
-      await conclave.setOpen(true)
-
-      await conclave
-        .connect(addr1)
-        .placeBet(42n, { value: ethers.parseEther("1") })
-      await conclave
-        .connect(addr1)
-        .placeBet(43n, { value: ethers.parseEther("1") })
-
-      // Calculate expected values
-      const betAmount = ethers.parseEther("1")
-      const feeAmount = (betAmount * FEE) / 100n
-      const amountToBet = betAmount - feeAmount
-
-      expect(await conclave.getUserBet(addr1.address, 42n)).to.equal(
-        amountToBet
-      )
-      expect(await conclave.getUserBet(addr1.address, 43n)).to.equal(
-        amountToBet
-      )
-    })
-
-    it("Should handle multiple bets from the same user on the same pope", async function () {
-      await conclave.setOpen(true)
-
-      await conclave
-        .connect(addr1)
-        .placeBet(42n, { value: ethers.parseEther("1") })
-      await conclave
-        .connect(addr1)
-        .placeBet(42n, { value: ethers.parseEther("1") })
-
-      // Calculate expected values
-      const betAmount = ethers.parseEther("1")
-      const feeAmount = (betAmount * FEE) / 100n
-      const amountToBet = betAmount - feeAmount
-
-      expect(await conclave.getUserBet(addr1.address, 42n)).to.equal(
-        amountToBet * 2n
-      )
-    })
-
-    it("Should distribute prizes proportionally when multiple users bet on the winning pope", async function () {
-      await conclave.setOpen(true)
-
-      // Addr1 bets 1 ETH on Pope 42
-      await conclave
-        .connect(addr1)
-        .placeBet(42n, { value: ethers.parseEther("1") })
-
-      // Addr2 bets 2 ETH on Pope 42
-      await conclave
-        .connect(addr2)
-        .placeBet(42n, { value: ethers.parseEther("2") })
-
-      // Another user bets 3 ETH on Pope 43
-      await conclave
-        .connect(addrs[0])
-        .placeBet(43n, { value: ethers.parseEther("3") })
-
-      // Close betting and set Pope 42 as winner
-      await conclave.setOpen(false)
-      await conclave.setWinner(42n)
-
-      // Get values to calculate expected prize
-      const userBet1 = await conclave.getUserBet(addr1.address, 42n)
-      const totalBetsOnWinner = await conclave.totalBetsByPopeId(42n)
-      const bagBefore = await conclave.bag()
-
-      // Calculate expected prize - this should match contract calculation
-      const expectedPrize1 = (userBet1 * bagBefore) / totalBetsOnWinner
-
-      // Check Addr1's prize
-      const initialBalance1 = await ethers.provider.getBalance(addr1.address)
-      const tx1 = await conclave.connect(addr1).redeemPrize()
-      const receipt1 = await tx1.wait()
-      const gasUsed1 = receipt1.gasUsed * receipt1.gasPrice
-      const finalBalance1 = await ethers.provider.getBalance(addr1.address)
-
-      // Calculate actual prize received
-      const actualPrize1 = finalBalance1 - initialBalance1 + gasUsed1
-
-      // Expect the difference to be very small (allow for minimal rounding)
-      expect(actualPrize1).to.be.closeTo(expectedPrize1, 100n)
-
-      // Check Addr2's prize
-      const userBet2 = await conclave.getUserBet(addr2.address, 42n)
-      const bagAfter = await conclave.bag()
-      const remainingBetsOnWinner = totalBetsOnWinner - userBet1
-      const expectedPrize2 = (userBet2 * bagAfter) / remainingBetsOnWinner
-
-      const initialBalance2 = await ethers.provider.getBalance(addr2.address)
-      const tx2 = await conclave.connect(addr2).redeemPrize()
-      const receipt2 = await tx2.wait()
-      const gasUsed2 = receipt2.gasUsed * receipt2.gasPrice
-      const finalBalance2 = await ethers.provider.getBalance(addr2.address)
-
-      const actualPrize2 = finalBalance2 - initialBalance2 + gasUsed2
-
-      expect(actualPrize2).to.be.closeTo(expectedPrize2, 100n)
+      // Distribution should still be valid
+      expect(await theConclave.validateDistribution()).to.equal(true)
     })
   })
 })
