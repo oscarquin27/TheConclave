@@ -148,7 +148,6 @@ contract TheConclave {
         require(winner == 0, "Winner already set");
         require(popeId >= 1 && popeId <= 135, "Pope id must be between 1 and 135");
         require(timestamp > startTime, "Cannot place winner on that timestamp");
-        require(timestamp <= closedBetTimestamp, "Winner timestamp cannot be after betting closed");
         winner = popeId;
         emit WinnerSet(popeId);
     }
@@ -192,7 +191,7 @@ contract TheConclave {
     function redeemPrize() public MustBeClosed HabemusPapam MustBeDisputed WhenNotPaused nonReentrant {
         require(_isUserWinner(msg.sender), "You didn't vote for the winning Pope");
         require(!hasClaimed[msg.sender], "You have already claimed your prize");
-
+        
         uint userBet = userVote[msg.sender][winner];
         require(userBet > 0, "No bets to redeem");
 
