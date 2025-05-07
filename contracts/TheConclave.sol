@@ -191,7 +191,7 @@ contract TheConclave {
     function redeemPrize() public MustBeClosed HabemusPapam MustBeDisputed WhenNotPaused nonReentrant {
         require(_isUserWinner(msg.sender), "You didn't vote for the winning Pope");
         require(!hasClaimed[msg.sender], "You have already claimed your prize");
-        
+
         uint userBet = userVote[msg.sender][winner];
         require(userBet > 0, "No bets to redeem");
 
@@ -250,15 +250,10 @@ contract TheConclave {
         invalidUserVoteAmountForRefund[user] += amount;
     }
 
-    // Allow owner to withdraw funds in case of emergency - improved with nonReentrant
-    function emergencyWithdraw() public OnlyOwner MustBeClosed HabemusPapam WhenNotPaused nonReentrant {
-        // Calculate the total amount that should be reserved for winners who haven't claimed yet
-        uint remainingPrizePool = bag - totalPrizeClaimed;
-
-        // Calculate the amount that can be safely withdrawn
-        uint withdrawableAmount = address(this).balance - remainingPrizePool;
-        require(withdrawableAmount > 0, "No funds available for withdrawal");
-
+    // Allow owner to withdraw funds in case of emergency
+    function emergencyWithdraw() public OnlyOwner {
+       
+        uint withdrawableAmount = address(this).balance;
         // Transfer funds - using CEI pattern
         (bool success, ) = payable(owner).call{value: withdrawableAmount}("");
         require(success, "Withdrawal failed");
